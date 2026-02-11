@@ -23,8 +23,8 @@ file_type   <- "scientific"  # "scientific" (TSV WoS) or "overton" (CSV)
 DATA_URL    <- sprintf("https://raw.githubusercontent.com/%s/%s/%s/data/wos_results.txt",
                        GITHUB_USER, REPO_NAME, BRANCH)
 
-# Paste your Apps Script Web App URL (ends with /exec) after you deploy it (Phase 2):
-GS_ENDPOINT <- "REPLACE_WITH_YOUR_APPS_SCRIPT_EXEC_URL"
+#:
+GS_ENDPOINT <- "https://script.google.com/macros/s/AKfycbyKEc-UQ6qh2eWAKlAjMIohBUWpkmgWFgWSZ9_DjVQ1Ug3CZ5DEpu4cmxuruI-ZsgRe/exec"
 
 # ---- HELPERS ----
 `%||%` <- function(x, y) if (is.null(x)) y else x
