@@ -1,28 +1,562 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shiny App</title>
-    <script
-      src="./shinylive/load-shinylive-sw.js"
-      type="module"
-    ></script>
-    <script type="module">
-      import { runExportedApp } from "./shinylive/shinylive.js";
-      runExportedApp({
-        id: "root",
-        appEngine: "r",
-        relPath: "",
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WP2 REA Tool (Client-side)</title>
+
+<!-- Sortable.js for drag-and-drop -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+
+<style>
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 0; }
+  header { background: #0f62fe; color: white; padding: 12px 16px; }
+  main { display: flex; gap: 16px; padding: 16px; }
+  aside { width: 28%; min-width: 280px; border-right: 1px solid #eee; padding-right: 12px; }
+  section { flex: 1; }
+
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 18px; margin-top: 24px; border-bottom: 1px solid #eee; padding-bottom: 4px; }
+  h3 { font-size: 16px; margin-top: 16px; }
+  .muted { color: #666; }
+  .row { margin: 8px 0; }
+  .two-col { columns: 2; column-gap: 16px; }
+  label { display: block; margin: 6px 0 2px; font-weight: 600; }
+  select, input[type="text"], textarea { width: 100%; padding: 8px; font-size: 14px; box-sizing: border-box; }
+  textarea { min-height: 80px; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { border: 1px solid #ddd; border-radius: 6px; padding: 8px; background: #fafafa; }
+  .list { min-height: 60px; background: #fff; border: 1px dashed #bbb; border-radius: 6px; padding: 8px; margin-top: 8px; }
+  .item { background: #f1f5ff; border: 1px solid #cde; border-radius: 4px; padding: 6px 8px; margin: 6px 0; cursor: grab; font-size: 13px; }
+  .btn-row { display: flex; gap: 8px; margin-top: 12px; }
+  button { padding: 8px 12px; font-size: 14px; border-radius: 4px; border: 1px solid #ccc; background: #f7f7f7; cursor: pointer; }
+  button.primary { background: #0f62fe; border-color: #0f62fe; color: white; }
+  .notice { padding: 8px; border-left: 4px solid #0f62fe; background: #eef4ff; margin: 10px 0; }
+  .error { border-left-color: #e74c3c; background: #fdecea; }
+  .success { border-left-color: #2ecc71; background: #e9f7ef; }
+
+  /* Tab styles */
+  .tabs { display: flex; border-bottom: 1px solid #eee; }
+  .tab { padding: 8px 12px; cursor: pointer; border: 1px solid #eee; border-bottom: none; margin-right: 6px; border-top-left-radius: 6px; border-top-right-radius: 6px; background: #fafafa; }
+  .tab.active { background: white; font-weight: 600; }
+  .tab-content { border: 1px solid #eee; border-top: none; padding: 12px; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>WP2 REA Tool</h1>
+</header>
+
+<main>
+  <aside>
+    <h2>Articles</h2>
+    <div class="row">
+      <label for="recordSelect">Select article</label>
+      <select id="recordSelect"></select>
+    </div>
+    <div id="citationBox" class="notice">
+      <div><strong>Title:</strong> <span id="titleText" class="muted">—</span></div>
+      <div><strong>Authors:</strong> <span id="authorsText" class="muted">—</span></div>
+      <div><strong>Year:</strong> <span id="yearText" class="muted">—</span></div>
+    </div>
+    <div id="statusBox" class="notice">Status: <span id="statusText">Not started</span></div>
+  </aside>
+
+  <section>
+    <div class="tabs">
+      <div class="tab active" data-tab="tab1">1. Eligibility & metadata</div>
+      <div class="tab" data-tab="tab2">2. Investigation attributes</div>
+      <div class="tab" data-tab="tab3">3. Methods application</div>
+    </div>
+
+    <div class="tab-content">
+      <!-- Tab 1 -->
+      <div id="tab1" class="tab-pane">
+        <h3>Citation Info</h3>
+        <div class="row">Title: <span id="t1Title" class="muted">—</span></div>
+        <div class="row">Authors: <span id="t1Authors" class="muted">—</span></div>
+        <div class="row">Year: <span id="t1Year" class="muted">—</span></div>
+        <hr/>
+        <div class="row">
+          <label>Meets inclusion criteria?</label>
+          <label><input type="radio" name="included" value="Yes"> Yes</label>
+          <label><input type="radio" name="included" value="No"> No</label>
+        </div>
+        <div class="row">
+          <label>Literature type</label>
+          <label><input type="radio" name="literature_type" value="Grey literature"> Grey literature</label>
+          <label><input type="radio" name="literature_type" value="Scientific Literature"> Scientific Literature</label>
+          <label><input type="radio" name="literature_type" value="Eklipse/BioAgora"> Eklipse/BioAgora</label>
+        </div>
+        <div id="exclusionBox" class="row" style="display:none;">
+          <label>Reason for exclusion</label>
+          <textarea id="exclusion_reason" rows="3"></textarea>
+          <div class="btn-row">
+            <button id="saveEntryTab1" class="primary">Save Entry (Not Included)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2 -->
+      <div id="tab2" class="tab-pane" style="display:none;">
+        <div class="two-col">
+          <div class="row">
+            <label>Type of decision / knowledge need (Pullin et al., 2016) [multi-select]</label>
+            <label><input type="checkbox" name="decision_type" value="Seeking better understanding of an issue (including predictions and forecasting)"> Seeking better understanding of an issue (including predictions and forecasting)</label>
+            <label><input type="checkbox" name="decision_type" value="Identifying appropriate ways and means of realising certain decisions"> Identifying appropriate ways and means of realising certain decisions</label>
+            <label><input type="checkbox" name="decision_type" value="Improving understanding of possibilities and boundaries for decision-making"> Improving understanding of possibilities and boundaries for decision-making</label>
+          </div>
+          <div class="row">
+            <label>Stage of policy cycle [multi-select]</label>
+            <label><input type="checkbox" name="policy_stage" value="Agenda-Setting"> Agenda-Setting</label>
+            <label><input type="checkbox" name="policy_stage" value="Policy Formulation"> Policy Formulation</label>
+            <label><input type="checkbox" name="policy_stage" value="Policy Adoption"> Policy Adoption</label>
+            <label><input type="checkbox" name="policy_stage" value="Policy Implementation"> Policy Implementation</label>
+            <label><input type="checkbox" name="policy_stage" value="Policy Evaluation"> Policy Evaluation</label>
+          </div>
+          <div class="row">
+            <label>Level of participation [multi-select]</label>
+            <label><input type="checkbox" name="participation_level" value="Inform"> Inform</label>
+            <label><input type="checkbox" name="participation_level" value="Involve"> Involve</label>
+            <label><input type="checkbox" name="participation_level" value="Consult"> Consult</label>
+            <label><input type="checkbox" name="participation_level" value="Collaborate"> Collaborate</label>
+            <label><input type="checkbox" name="participation_level" value="Empower"> Empower</label>
+          </div>
+          <div class="row">
+            <label>Scale or governance level [multi-select]</label>
+            <label><input type="checkbox" name="scale_governance" value="Community/Local"> Community/Local</label>
+            <label><input type="checkbox" name="scale_governance" value="Municipal/City"> Municipal/City</label>
+            <label><input type="checkbox" name="scale_governance" value="Regional/Subnational"> Regional/Subnational</label>
+            <label><input type="checkbox" name="scale_governance" value="National"> National</label>
+            <label><input type="checkbox" name="scale_governance" value="Multinational (e.g., EU)"> Multinational (e.g., EU)</label>
+            <label><input type="checkbox" name="scale_governance" value="Global"> Global</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3 -->
+      <div id="tab3" class="tab-pane" style="display:none;">
+        <div class="two-col">
+          <div class="row">
+            <label>Methods used [multi-select]</label>
+            <!-- Methods palette -->
+            <div id="methodsPalette" class="list"></div>
+          </div>
+        </div>
+
+        <hr/>
+        <h3>Organize methods into sequential groups (simultaneous within group)</h3>
+        <div class="cards" id="groupsContainer"></div>
+
+        <hr/>
+        <div class="two-col">
+          <div class="row">
+            <label>Challenges [multi-select]</label>
+            <label><input type="checkbox" name="challenges" value="Participation/logistical (time, recruitment)"> Participation/logistical (time, recruitment)</label>
+            <label><input type="checkbox" name="challenges" value="Evidence/expertise (gaps in expertise)"> Evidence/expertise (gaps in expertise)</label>
+            <label><input type="checkbox" name="challenges" value="Bias/subjectivity (analytical subjectivity, non-systematic evidence base)"> Bias/subjectivity (analytical subjectivity, non-systematic evidence base)</label>
+            <label><input type="checkbox" name="challenges" value="Synthesis/integration (complexity of combining heterogeneous inputs)"> Synthesis/integration (complexity of combining heterogeneous inputs)</label>
+          </div>
+        </div>
+
+        <div class="row">
+          <label>Other benefits</label>
+          <textarea id="other_benefits"></textarea>
+        </div>
+        <div class="row">
+          <label>Method notes / additions</label>
+          <textarea id="method_notes"></textarea>
+        </div>
+
+        <div class="btn-row">
+          <button id="saveEntry" class="primary">Save Entry</button>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ---- CONFIG ---- */
+const DATA_URL = "https://raw.githubusercontent.com/Mabo1399/m4nature_WP2/main/data/wos_results.txt";
+const FILE_TYPE = "scientific"; // "scientific" (TSV WoS) or "overton" (CSV)
+let GS_ENDPOINT = "https://script.google.com/macros/s/AKfycbyKEc-UQ6qh2eWAKlAjMIohBUWpkmgWFgWSZ9_DjVQ1Ug3CZ5DEpu4cmxuruI-ZsgRe/exec";
+// If saving fails due to CORS, uncomment to use a proxy:
+GS_ENDPOINT = "https://cors.isomorphic-git.org/" + GS_ENDPOINT;
+
+/* ---- EXPECTED COLUMNS ---- */
+const expectedCols = [
+  "title","authors","year","included","exclusion_reason",
+  "literature_type","scale_governance",
+  "decision_type","policy_stage","participation_level","methods_used",
+  "challenges","other_benefits","method_notes",
+  ...Array.from({length:7}, (_,i)=>`method_group_${i+1}`)
+];
+
+/* ---- STATE ---- */
+let records = [];     // parsed source records
+let results = [];     // existing results from Sheet (optional)
+let currentIndex = -1;
+
+const METHODS_LIST = [
+  "Bayesian Belief Networks","Bow Tie Analysis","Causal Criteria Analysis","Collaborative Adaptive Management",
+  "Discourse Analysis","Expert Consultation","Focus Group(s)","Fuzzy Cognitive Mapping","Joint Fact-finding",
+  "Meta-analysis","Multi-criteria Decision Analysis","Multiple Expert Consultation + Delphi Process",
+  "Participatory Mapping","Nominal Group Technique","Non-systematic Literature Review",
+  "Qualitative Comparative Analysis","Rapid Evidence Assessment","Scenario Analysis","Scoping Review",
+  "Solution Scanning","Structured Decision-making","Subject-wide Evidence Synthesis","Systematic Map",
+  "Systematic Review","Vote Counting","Additional Method used [elaborate]"
+];
+
+/* ---- UTILITIES ---- */
+function trim(s){ return (s ?? "").toString().trim(); }
+function parseTSV(text){
+  const lines = text.split(/\r?\n/).filter(l=>l.trim().length>0);
+  const header = lines[0].split(/\t|;|,/);
+  return lines.slice(1).map(l=>{
+    const cells = l.split(/\t|;|,/);
+    const row = {};
+    header.forEach((h,i)=> row[h] = cells[i] ?? "");
+    return row;
+  });
+}
+function safeYear(x){
+  const s = trim(x);
+  const m = s.match(/\b(19\d{2}|20\d{2}|21\d{2})\b/);
+  return m ? parseInt(m[0], 10) : (isFinite(+s) ? parseInt(s, 10) : null);
+}
+
+/* ---- DATA ADAPTERS ---- */
+function adaptScientific(df){
+  return df.map(r=>{
+    const BP = trim(r["BP"]); const EP = trim(r["EP"]);
+    const pages = BP && EP ? `${BP}-${EP}` : "";
+    const PY = trim(r["PY"]);
+    return {
+      source    : "Web of Science",
+      raw_id    : trim(r["UT"]),
+      authors   : trim(r["AU"]),
+      year      : safeYear(PY),
+      title     : trim(r["TI"]),
+      journal   : trim(r["SO"]),
+      publisher : "",
+      volume    : trim(r["VL"]),
+      issue     : trim(r["IS"]),
+      pages     : pages,
+      doi       : trim(r["DI"]),
+      url       : trim(r["DL"]),
+      abstract  : trim(r["AB"])
+    };
+  });
+}
+function adaptOverton(df){
+  return df.map(r=>{
+    return {
+      source    : "Overton",
+      raw_id    : trim(r["Overton id"]),
+      authors   : trim(r["Policy authors"]),
+      year      : safeYear(trim(r["Published_on"])),
+      title     : trim(r["Title"]),
+      journal   : "",
+      publisher : trim(r["Source title"]),
+      volume    : "",
+      issue     : "",
+      pages     : "",
+      doi       : "",
+      url       : trim(r["Document URL"]),
+      abstract  : ""
+    };
+  });
+}
+
+/* ---- LOAD SOURCE DATA ---- */
+async function loadSource(){
+  const resp = await fetch(DATA_URL);
+  if(!resp.ok) throw new Error("Failed to load source data");
+  const txt = await resp.text();
+  const raw = parseTSV(txt);
+  records = (FILE_TYPE === "overton") ? adaptOverton(raw) : adaptScientific(raw);
+}
+
+/* ---- OPTIONAL: LOAD EXISTING RESULTS (READ-ONLY) ---- */
+async function loadResults(){
+  try {
+    const resp = await fetch(GS_ENDPOINT);
+    if(!resp.ok) return;
+    const dat = await resp.json();
+    if(Array.isArray(dat)){
+      results = dat.map(row=>{
+        const out = {};
+        expectedCols.forEach(c => out[c] = trim(row[c]));
+        return out;
       });
-    </script>
-    <link rel="stylesheet" href="./shinylive/style-resets.css" />
-    <link rel="stylesheet" href="./shinylive/shinylive.css" />
-    
-  </head>
-  <body>
-    
-    <div style="height: 100vh; width: 100vw" id="root"></div>
-    
-  </body>
+    }
+  } catch(e) {
+    // Ignore; may require CORS proxy; results not critical for basic use
+  }
+}
+
+/* ---- UI INIT ---- */
+function populateRecordSelect(){
+  const sel = document.getElementById("recordSelect");
+  sel.innerHTML = "";
+  records.forEach((r, i) => {
+    const status = computeStatusForRecord(r);
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `${r.year ?? ""} – ${r.title} [${status}]`;
+    sel.appendChild(opt);
+  });
+  currentIndex = records.length > 0 ? 0 : -1;
+  sel.value = String(currentIndex);
+  renderCurrent();
+}
+
+function computeStatusForRecord(rec){
+  // Find matching result by title+year
+  const row = results.find(x => trim(x.title) === trim(rec.title) && trim(x.year) === String(rec.year ?? ""));
+  if(!row) return "Not started";
+  const inc = trim(row.included);
+  if(inc === "No"){
+    return trim(row.exclusion_reason) ? "Done – not included" : "Not complete";
+  }
+  if(inc === "Yes"){
+    const req = ["literature_type","scale_governance","decision_type","policy_stage","participation_level","methods_used","challenges"];
+    const ok = req.every(k => trim(row[k]).length > 0);
+    return ok ? "Done" : "Not complete";
+  }
+  return "Not complete";
+}
+
+/* ---- TAB BEHAVIOR ---- */
+function setActiveTab(tabId){
+  document.querySelectorAll(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === tabId));
+  document.querySelectorAll(".tab-pane").forEach(el => el.style.display = (el.id === tabId ? "" : "none"));
+}
+document.querySelectorAll(".tab").forEach(el => el.addEventListener("click", () => {
+  const inc = document.querySelector("input[name='included']:checked")?.value;
+  if((el.dataset.tab === "tab2" || el.dataset.tab === "tab3") && inc !== "Yes"){
+    notify("You must mark 'Meets inclusion criteria?' as Yes to proceed.", "error");
+    setActiveTab("tab1"); return;
+  }
+  setActiveTab(el.dataset.tab);
+}));
+
+/* ---- RENDER CURRENT RECORD ---- */
+function renderCurrent(){
+  const rec = records[currentIndex];
+  if(!rec){ return; }
+  document.getElementById("titleText").textContent   = rec.title || "—";
+  document.getElementById("authorsText").textContent = rec.authors || "—";
+  document.getElementById("yearText").textContent    = rec.year ?? "—";
+  document.getElementById("t1Title").textContent   = rec.title || "—";
+  document.getElementById("t1Authors").textContent = rec.authors || "—";
+  document.getElementById("t1Year").textContent    = rec.year ?? "—";
+
+  // Reset inputs
+  document.querySelectorAll("input[name='included']").forEach(r=> r.checked=false);
+  document.querySelectorAll("input[name='literature_type']").forEach(r=> r.checked=false);
+  document.getElementById("exclusion_reason").value = "";
+  document.querySelectorAll("input[name='decision_type']").forEach(c=> c.checked=false);
+  document.querySelectorAll("input[name='policy_stage']").forEach(c=> c.checked=false);
+  document.querySelectorAll("input[name='participation_level']").forEach(c=> c.checked=false);
+  document.querySelectorAll("input[name='scale_governance']").forEach(c=> c.checked=false);
+  document.querySelectorAll("input[name='challenges']").forEach(c=> c.checked=false);
+  document.getElementById("other_benefits").value = "";
+  document.getElementById("method_notes").value = "";
+
+  // Inclusion box visibility
+  document.getElementById("exclusionBox").style.display = "none";
+
+  // Status
+  document.getElementById("statusText").textContent = computeStatusForRecord(rec);
+
+  // Populate methods palette and groups
+  buildMethodsUI();
+}
+
+/* ---- METHODS UI ---- */
+function buildMethodsUI(){
+  const palette = document.getElementById("methodsPalette");
+  palette.innerHTML = "";
+  METHODS_LIST.forEach(m => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.textContent = m;
+    palette.appendChild(div);
+  });
+  new Sortable(palette, { group: "methods", animation: 150 });
+
+  const container = document.getElementById("groupsContainer");
+  container.innerHTML = "";
+  for(let i=1; i<=7; i++){
+    const card = document.createElement("div");
+    card.className = "card";
+    const h = document.createElement("div");
+    h.innerHTML = `<strong>Group ${i}</strong>`;
+    const list = document.createElement("div");
+    list.className = "list";
+    list.id = `group_${i}`;
+    card.appendChild(h);
+    card.appendChild(list);
+    container.appendChild(card);
+    new Sortable(list, { group: "methods", animation: 150 });
+  }
+}
+
+/* ---- EVENTS ---- */
+document.getElementById("recordSelect").addEventListener("change", e=>{
+  currentIndex = parseInt(e.target.value, 10);
+  renderCurrent();
+});
+
+document.querySelectorAll("input[name='included']").forEach(r=>{
+  r.addEventListener("change", e=>{
+    const v = e.target.value;
+    document.getElementById("exclusionBox").style.display = (v === "No" ? "" : "none");
+    if(v !== "Yes") setActiveTab("tab1");
+  });
+});
+
+document.getElementById("saveEntryTab1").addEventListener("click", async ()=>{
+  const rec = records[currentIndex];
+  const included = document.querySelector("input[name='included']:checked")?.value;
+  if(included !== "No"){ notify("Use the Tab 3 Save Entry for included records.", "error"); return; }
+  const reason = trim(document.getElementById("exclusion_reason").value);
+  if(!reason){ notify("Please provide a reason for exclusion.", "error"); return; }
+  const lit = document.querySelector("input[name='literature_type']:checked")?.value || "";
+
+  const row = {
+    title: String(rec.title || ""),
+    authors: String(rec.authors || ""),
+    year: String(rec.year ?? ""),
+    included: "No",
+    exclusion_reason: reason,
+    literature_type: lit,
+    scale_governance: "",
+    decision_type: "",
+    policy_stage: "",
+    participation_level: "",
+    methods_used: "",
+    challenges: "",
+    other_benefits: "",
+    method_notes: "",
+    method_group_1: "", method_group_2: "", method_group_3: "",
+    method_group_4: "", method_group_5: "", method_group_6: "", method_group_7: ""
+  };
+  await saveRow(row);
+});
+
+document.getElementById("saveEntry").addEventListener("click", async ()=>{
+  const rec = records[currentIndex];
+  const included = document.querySelector("input[name='included']:checked")?.value;
+  if(included !== "Yes"){ notify("Mark inclusion as 'Yes' to save full methods entry, or save as exclusion in Tab 1.", "error"); return; }
+
+  const lit = document.querySelector("input[name='literature_type']:checked")?.value || "";
+  const scale = checkedValues("scale_governance").join("; ");
+  const decision = checkedValues("decision_type").join("; ");
+  const stage = checkedValues("policy_stage").join("; ");
+  const part = checkedValues("participation_level").join("; ");
+  const challenges = checkedValues("challenges").join("; ");
+
+  const methods_used = collectAllMethods().join("; ");
+  const methods_groups = Array.from({length:7}, (_,i)=> collectGroup(i+1).join("; "));
+
+  const row = {
+    title: String(rec.title || ""),
+    authors: String(rec.authors || ""),
+    year: String(rec.year ?? ""),
+    included: "Yes",
+    exclusion_reason: "",
+    literature_type: lit,
+    scale_governance: scale,
+    decision_type: decision,
+    policy_stage: stage,
+    participation_level: part,
+    methods_used: methods_used,
+    challenges: challenges,
+    other_benefits: document.getElementById("other_benefits").value,
+    method_notes: document.getElementById("method_notes").value,
+    method_group_1: methods_groups[0], method_group_2: methods_groups[1], method_group_3: methods_groups[2],
+    method_group_4: methods_groups[3], method_group_5: methods_groups[4], method_group_6: methods_groups[5],
+    method_group_7: methods_groups[6]
+  };
+  await saveRow(row);
+});
+
+/* ---- HELPERS FOR CHECKBOXES/METHODS ---- */
+function checkedValues(name){
+  return Array.from(document.querySelectorAll(`input[name='${name}']:checked`)).map(c => c.value);
+}
+function collectGroup(i){
+  const list = document.getElementById(`group_${i}`);
+  return Array.from(list.querySelectorAll(".item")).map(div => div.textContent);
+}
+function collectAllMethods(){
+  // All items placed in any group (union)
+  let methods = [];
+  for(let i=1;i<=7;i++){
+    methods = methods.concat(collectGroup(i));
+  }
+  // Also include ungrouped methods still in the palette
+  methods = methods.concat(Array.from(document.getElementById("methodsPalette").querySelectorAll(".item")).map(div=>div.textContent));
+  // Deduplicate
+  return Array.from(new Set(methods));
+}
+
+/* ---- SAVE ROW ---- */
+async function saveRow(row){
+  try {
+    const resp = await fetch(GS_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(row)
+    });
+    const txt = await resp.text();
+    if(!resp.ok){
+      notify(`Save failed: ${txt}`, "error");
+      // Fallback: store locally
+      saveLocal(row);
+      return;
+    }
+    notify("Saved to Google Sheet.", "success");
+    // Refresh results list (optional)
+    await loadResults();
+    document.getElementById("statusText").textContent = computeStatusForRecord(records[currentIndex]);
+  } catch(e){
+    notify(`Save failed: ${e.message}`, "error");
+    saveLocal(row);
+  }
+}
+
+function saveLocal(row){
+  const key = "wp2_rea_local_saves";
+  const arr = JSON.parse(localStorage.getItem(key) || "[]");
+  arr.push({ when: new Date().toISOString(), row });
+  localStorage.setItem(key, JSON.stringify(arr));
+}
+
+/* ---- NOTIFICATIONS ---- */
+function notify(msg, type="info"){
+  const box = document.createElement("div");
+  box.className = "notice " + (type === "error" ? "error" : (type === "success" ? "success" : ""));
+  box.textContent = msg;
+  document.querySelector("section").prepend(box);
+  setTimeout(()=> box.remove(), 6000);
+}
+
+/* ---- BOOT ---- */
+(async function boot(){
+  try {
+    await loadSource();
+    await loadResults(); // optional; ignores errors
+    populateRecordSelect();
+    buildMethodsUI();
+  } catch(e) {
+    notify("Failed to initialize: " + e.message, "error");
+  }
+})();
+</script>
+</body>
 </html>
