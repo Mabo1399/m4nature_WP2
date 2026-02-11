@@ -1,5 +1,5 @@
 # =========================
-# WP2 REA Tool 
+# WP2 REA Tool (Shinylive/WebR-compatible)
 # =========================
 
 library(shiny)
@@ -10,8 +10,8 @@ library(dplyr)
 library(lubridate)
 library(tibble)
 library(stringr)
-library(httr)
 library(jsonlite)
+library(webr)   # for webR-friendly fetch
 
 # ---- CONFIG ----
 GITHUB_USER <- "Mabo1399"
@@ -23,8 +23,10 @@ file_type   <- "scientific"  # "scientific" (TSV WoS) or "overton" (CSV)
 DATA_URL    <- sprintf("https://raw.githubusercontent.com/%s/%s/%s/data/wos_results.txt",
                        GITHUB_USER, REPO_NAME, BRANCH)
 
-#:
+# Paste your Apps Script Web App URL (ends with /exec); use a CORS proxy if needed
 GS_ENDPOINT <- "https://script.google.com/macros/s/AKfycbyKEc-UQ6qh2eWAKlAjMIohBUWpkmgWFgWSZ9_DjVQ1Ug3CZ5DEpu4cmxuruI-ZsgRe/exec"
+# If you get CORS errors on save, replace GS_ENDPOINT with a proxied URL, e.g.:
+# GS_ENDPOINT <- "https://cors.isomorphic-git.org/https://script.google.com/macros/s/AKfycbyKEc-UQ6qh2eWAKlAjMIohBUWpkmgWFgWSZ9_DjVQ1Ug3CZ5DEpu4cmxuruI-ZsgRe/exec"
 
 # ---- HELPERS ----
 `%||%` <- function(x, y) if (is.null(x)) y else x
@@ -52,11 +54,16 @@ safe_year <- function(x) {
 
 # ---- LOAD DATA (from GitHub raw URL) ----
 load_source_data <- function(file_type, url) {
-  txt <- GET(url) |> content(as = "text", encoding = "UTF-8")
+  tf <- tempfile(fileext = if (file_type == "overton") ".csv" else ".txt")
+  webr::fetch(url, tf)  # GET via webR
+  txt <- readr::read_file(tf)
+  
   if (file_type == "overton") {
-    read_csv(txt, show_col_types = FALSE)
+    readr::read_csv(txt, show_col_types = FALSE)
   } else {
-    read_tsv(txt, show_col_types = FALSE, quote = "")
+    # Auto-detect delimiter (tab/semicolon/comma)
+    delim <- if (grepl("\t", txt)) "\t" else if (grepl(";", txt)) ";" else ","
+    readr::read_delim(txt, delim = delim, show_col_types = FALSE, quote = "")
   }
 }
 
@@ -114,36 +121,31 @@ expected_cols <- c(
   paste0("method_group_", 1:7)
 )
 
-# ---- GOOGLE SHEET API HELPERS ----
+# ---- GOOGLE SHEET API HELPERS (WebR-friendly) ----
 sheet_get <- function() {
-  tryCatch({
-    resp <- httr::GET(GS_ENDPOINT)
-    stop_for_status(resp)
-    txt <- content(resp, as = "text", encoding = "UTF-8")
-    dat <- jsonlite::fromJSON(txt, flatten = TRUE)
-    if (!is.data.frame(dat)) dat <- tibble()
-    for (mc in setdiff(expected_cols, names(dat))) dat[[mc]] <- NA_character_
-    dat %>% dplyr::select(dplyr::all_of(expected_cols)) %>% dplyr::mutate(dplyr::across(dplyr::everything(), as.character))
-  }, error = function(e) {
-    message("Failed to GET sheet: ", e$message)
-    tibble::as_tibble(setNames(rep(list(character()), length(expected_cols)), expected_cols))
-  })
+  tf <- tempfile(fileext = ".json")
+  ok <- tryCatch({ webr::fetch(GS_ENDPOINT, tf); TRUE }, error = function(e) FALSE)
+  if (!ok) {
+    # Return empty tibble with expected columns
+    return(tibble::as_tibble(setNames(rep(list(character()), length(expected_cols)), expected_cols)))
+  }
+  txt <- readr::read_file(tf)
+  dat <- tryCatch(jsonlite::fromJSON(txt, flatten = TRUE), error = function(e) tibble::tibble())
+  if (!is.data.frame(dat)) dat <- tibble::tibble()
+  for (mc in setdiff(expected_cols, names(dat))) dat[[mc]] <- NA_character_
+  dat %>%
+    dplyr::select(dplyr::all_of(expected_cols)) %>%
+    dplyr::mutate(dplyr::across(dplyr::everything(), as.character))
 }
 
+# POST helper: use JavaScript fetch (added in UI) to upsert a row
 sheet_upsert <- function(row_list) {
-  tryCatch({
-    resp <- httr::POST(
-      GS_ENDPOINT,
-      body = jsonlite::toJSON(row_list, auto_unbox = TRUE),
-      encode = "raw",
-      httr::add_headers("Content-Type" = "application/json")
-    )
-    stop_for_status(resp)
-    TRUE
-  }, error = function(e) {
-    showNotification(paste("Failed to save to Google Sheet:", e$message), type = "error")
-    FALSE
-  })
+  shinyjs::runjs(sprintf(
+    "gsUpsert(%s, %s);",
+    jsonlite::toJSON(GS_ENDPOINT, auto_unbox = TRUE),
+    jsonlite::toJSON(row_list, auto_unbox = TRUE)
+  ))
+  invisible(TRUE)
 }
 
 # =========================
@@ -151,23 +153,42 @@ sheet_upsert <- function(row_list) {
 # =========================
 ui <- fluidPage(
   useShinyjs(),
+  # JS helper to POST to GS_ENDPOINT and report status back to R
+  tags$script(HTML("
+    async function gsUpsert(url, payload) {
+      try {
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const txt = await resp.text();
+        let obj = {};
+        try { obj = JSON.parse(txt); } catch(e) {}
+        Shiny.setInputValue('gs_save_status', resp.ok ? 'ok' : ('error:' + (obj.message || txt)), {priority: 'event'});
+      } catch (e) {
+        Shiny.setInputValue('gs_save_status', 'error:' + e.message, {priority: 'event'});
+      }
+    }
+  ")),
+  
   titlePanel("WP2 REA Tool"),
-
+  
   tags$style(HTML("
     .two-col .shiny-options-group { column-count: 2; -moz-column-count: 2; -webkit-column-count: 2; }
     .two-col .checkbox, .two-col .radio { margin-top: 4px; margin-bottom: 4px; }
   ")),
-
+  
   sidebarLayout(
     sidebarPanel(
       selectInput("record", "Select article", choices = NULL),
       width = 3
     ),
-
+    
     mainPanel(
       tabsetPanel(
         id = "main_tabs",
-
+        
         tabPanel(
           "1. Eligibility & metadata", value = "tab1",
           h4("Citation Info"),
@@ -184,48 +205,48 @@ ui <- fluidPage(
             actionButton("save_entry_tab1", "Save Entry (Not Included)")
           )
         ),
-
+        
         tabPanel(
           "2. Investigation attributes", value = "tab2",
           div(class = "two-col",
               checkboxGroupInput("decision_type", "Type of decision / knowledge need (Pullin et al., 2016) [multi-select]",
-                choices = c(
-                  "Seeking better understanding of an issue (including predictions and forecasting)",
-                  "Identifying appropriate ways and means of realising certain decisions",
-                  "Improving understanding of possibilities and boundaries for decision-making"
-                )
+                                 choices = c(
+                                   "Seeking better understanding of an issue (including predictions and forecasting)",
+                                   "Identifying appropriate ways and means of realising certain decisions",
+                                   "Improving understanding of possibilities and boundaries for decision-making"
+                                 )
               )
           ),
           div(class = "two-col",
               checkboxGroupInput("policy_stage", "Stage of policy cycle [multi-select]",
-                choices = c("Agenda-Setting","Policy Formulation","Policy Adoption","Policy Implementation","Policy Evaluation")
+                                 choices = c("Agenda-Setting","Policy Formulation","Policy Adoption","Policy Implementation","Policy Evaluation")
               )
           ),
           div(class = "two-col",
               checkboxGroupInput("participation_level", "Level of participation [multi-select]",
-                choices = c("Inform", "Involve", "Consult", "Collaborate", "Empower")
+                                 choices = c("Inform", "Involve", "Consult", "Collaborate", "Empower")
               )
           ),
           div(class = "two-col",
               checkboxGroupInput("scale_governance", "Scale or governance level [multi-select]",
-                choices = c("Community/Local","Municipal/City","Regional/Subnational","National","Multinational (e.g., EU)","Global")
+                                 choices = c("Community/Local","Municipal/City","Regional/Subnational","National","Multinational (e.g., EU)","Global")
               )
           )
         ),
-
+        
         tabPanel(
           "3. Methods application", value = "tab3",
           div(class = "two-col",
               checkboxGroupInput("methods_used", "Methods used [multi-select]",
-                choices = c(
-                  "Bayesian Belief Networks","Bow Tie Analysis","Causal Criteria Analysis","Collaborative Adaptive Management",
-                  "Discourse Analysis","Expert Consultation","Focus Group(s)","Fuzzy Cognitive Mapping","Joint Fact-finding",
-                  "Meta-analysis","Multi-criteria Decision Analysis","Multiple Expert Consultation + Delphi Process",
-                  "Participatory Mapping","Nominal Group Technique","Non-systematic Literature Review",
-                  "Qualitative Comparative Analysis","Rapid Evidence Assessment","Scenario Analysis","Scoping Review",
-                  "Solution Scanning","Structured Decision-making","Subject-wide Evidence Synthesis","Systematic Map",
-                  "Systematic Review","Vote Counting","Additional Method used [elaborate]"
-                )
+                                 choices = c(
+                                   "Bayesian Belief Networks","Bow Tie Analysis","Causal Criteria Analysis","Collaborative Adaptive Management",
+                                   "Discourse Analysis","Expert Consultation","Focus Group(s)","Fuzzy Cognitive Mapping","Joint Fact-finding",
+                                   "Meta-analysis","Multi-criteria Decision Analysis","Multiple Expert Consultation + Delphi Process",
+                                   "Participatory Mapping","Nominal Group Technique","Non-systematic Literature Review",
+                                   "Qualitative Comparative Analysis","Rapid Evidence Assessment","Scenario Analysis","Scoping Review",
+                                   "Solution Scanning","Structured Decision-making","Subject-wide Evidence Synthesis","Systematic Map",
+                                   "Systematic Review","Vote Counting","Additional Method used [elaborate]"
+                                 )
               )
           ),
           hr(),
@@ -234,12 +255,12 @@ ui <- fluidPage(
           hr(),
           div(class = "two-col",
               checkboxGroupInput("challenges", "Challenges [multi-select]",
-                choices = c(
-                  "Participation/logistical (time, recruitment)",
-                  "Evidence/expertise (gaps in expertise)",
-                  "Bias/subjectivity (analytical subjectivity, non-systematic evidence base)",
-                  "Synthesis/integration (complexity of combining heterogeneous inputs)"
-                )
+                                 choices = c(
+                                   "Participation/logistical (time, recruitment)",
+                                   "Evidence/expertise (gaps in expertise)",
+                                   "Bias/subjectivity (analytical subjectivity, non-systematic evidence base)",
+                                   "Synthesis/integration (complexity of combining heterogeneous inputs)"
+                                 )
               )
           ),
           textAreaInput("other_benefits", "Other benefits", rows = 3),
@@ -255,15 +276,17 @@ ui <- fluidPage(
 # SERVER
 # =========================
 server <- function(input, output, session) {
+  # Load source data from GitHub raw (WebR fetch)
   raw_data   <- load_source_data(file_type, DATA_URL)
   records_df <- if (file_type == "overton") adapt_overton(raw_data) else adapt_scientific(raw_data)
-
+  
+  # Load existing results from Google Sheet (WebR fetch of JSON)
   results_df <- sheet_get()
   results_rv <- reactiveVal(results_df)
-
+  
   safe_equal_str <- function(a, b) { a <- ifelse(is.na(a), "", str_trim(a)); b <- ifelse(is.na(b), "", str_trim(b)); a == b }
   safe_equal_int <- function(a, b) { ai <- as_int(a); bi <- as_int(b); (is.na(ai) & is.na(bi)) | (!is.na(ai) & !is.na(bi) & ai == bi) }
-
+  
   completion_status <- function(row) {
     inc <- row$included
     if (is.na(inc) || inc == "") return("🟠 Not complete")
@@ -287,7 +310,7 @@ server <- function(input, output, session) {
     }
     "🟠 Not complete"
   }
-
+  
   update_record_choices <- function() {
     res <- isolate(results_rv())
     choices <- sapply(seq_len(nrow(records_df)), function(i) {
@@ -303,15 +326,15 @@ server <- function(input, output, session) {
     updateSelectInput(session, "record", choices = setNames(seq_len(nrow(records_df)), choices))
   }
   update_record_choices()
-
+  
   current <- reactive({ req(input$record); records_df[as.integer(input$record), ] })
-
+  
   output$title_text   <- renderText({ paste("Title:",   current()$title) })
   output$authors_text <- renderText({ paste("Authors:", current()$authors) })
   output$year_text    <- renderText({ paste("Year:",    current()$year) })
-
+  
   observe({ inc <- input$included; if (is.null(inc) || inc != "Yes") updateTabsetPanel(session, "main_tabs", selected = "tab1") })
-
+  
   output$methods_bucket_ui <- renderUI({
     req(input$methods_used)
     n_methods <- length(input$methods_used)
@@ -329,7 +352,7 @@ server <- function(input, output, session) {
       rank_lists
     ))
   })
-
+  
   observe({
     if (!is.null(input$main_tabs) && input$main_tabs %in% c("tab2", "tab3")) {
       if (is.null(input$included) || input$included != "Yes") {
@@ -338,7 +361,20 @@ server <- function(input, output, session) {
       }
     }
   })
-
+  
+  # Handle upsert status (from JS) and refresh results
+  observeEvent(input$gs_save_status, {
+    status <- input$gs_save_status
+    if (is.null(status)) return()
+    if (identical(status, "ok")) {
+      showNotification("Saved to Google Sheet.", type = "message")
+      results_rv(sheet_get())
+      update_record_choices()
+    } else {
+      showNotification(paste("Save failed:", status), type = "error")
+    }
+  })
+  
   observeEvent(input$save_entry_tab1, {
     req(input$included)
     if (input$included != "No") {
@@ -347,7 +383,7 @@ server <- function(input, output, session) {
     if (is.null(input$exclusion_reason) || input$exclusion_reason == "") {
       showNotification("Please provide a reason for exclusion.", type = "error"); return(NULL)
     }
-
+    
     row <- list(
       title = as.character(current()$title),
       authors = as.character(current()$authors),
@@ -367,26 +403,21 @@ server <- function(input, output, session) {
       method_group_4 = NA_character_, method_group_5 = NA_character_, method_group_6 = NA_character_,
       method_group_7 = NA_character_
     )
-    if (!sheet_upsert(row)) return(NULL)
-
-    results_rv(sheet_get())
-    showNotification("Excluded entry saved.", type = "message")
-    updateTabsetPanel(session, "main_tabs", selected = "tab1")
-    update_record_choices()
+    sheet_upsert(row)
   })
-
+  
   observeEvent(input$save_entry, {
     req(input$included)
     if (input$included != "Yes") {
       showNotification("Mark inclusion as 'Yes' to save full methods entry, or save as exclusion in Tab 1.", type = "warning"); return(NULL)
     }
-
+    
     methods_wide <- sapply(1:7, function(i) {
       g <- input$method_groups[[paste0("group_", i)]]
       if (is.null(g) || length(g) == 0) return(NA_character_)
       paste(g, collapse = "; ")
     })
-
+    
     row <- list(
       title = as.character(current()$title),
       authors = as.character(current()$authors),
@@ -406,12 +437,7 @@ server <- function(input, output, session) {
       method_group_4 = methods_wide[4], method_group_5 = methods_wide[5], method_group_6 = methods_wide[6],
       method_group_7 = methods_wide[7]
     )
-    if (!sheet_upsert(row)) return(NULL)
-
-    results_rv(sheet_get())
-    showNotification("Included entry saved.", type = "message")
-    updateTabsetPanel(session, "main_tabs", selected = "tab1")
-    update_record_choices()
+    sheet_upsert(row)
   })
 }
 
