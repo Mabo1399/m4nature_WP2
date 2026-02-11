@@ -11,31 +11,31 @@ library(lubridate)
 library(tibble)
 library(stringr)
 library(jsonlite)
-library(webr)   # for webR-friendly fetch
+library(webr)   # webR-friendly fetch for GET
 
 # ---- CONFIG ----
 GITHUB_USER <- "Mabo1399"
 REPO_NAME   <- "m4nature_WP2"
 BRANCH      <- "main"
 
-# Set the data source type and raw file URL in your repo:
-file_type   <- "scientific"  # "scientific" (TSV WoS) or "overton" (CSV)
-DATA_URL    <- sprintf("https://raw.githubusercontent.com/%s/%s/%s/data/wos_results.txt",
-                       GITHUB_USER, REPO_NAME, BRANCH)
+# Data source type and raw file URL in your repo:
+file_type <- "scientific"  # "scientific" (TSV WoS) or "overton" (CSV)
+DATA_URL  <- sprintf("https://raw.githubusercontent.com/%s/%s/%s/data/wos_results.txt",
+                     GITHUB_USER, REPO_NAME, BRANCH)
 
-# Paste your Apps Script Web App URL (ends with /exec); use a CORS proxy if needed
+# Google Apps Script Web App URL (ends with /exec)
+# If saving fails with CORS errors, use a proxied URL instead (uncomment the proxy line)
 GS_ENDPOINT <- "https://script.google.com/macros/s/AKfycbyKEc-UQ6qh2eWAKlAjMIohBUWpkmgWFgWSZ9_DjVQ1Ug3CZ5DEpu4cmxuruI-ZsgRe/exec"
-# If you get CORS errors on save, replace GS_ENDPOINT with a proxied URL, e.g.:
 # GS_ENDPOINT <- "https://cors.isomorphic-git.org/https://script.google.com/macros/s/AKfycbyKEc-UQ6qh2eWAKlAjMIohBUWpkmgWFgWSZ9_DjVQ1Ug3CZ5DEpu4cmxuruI-ZsgRe/exec"
 
 # ---- HELPERS ----
 `%||%` <- function(x, y) if (is.null(x)) y else x
-as_int <- function(x) suppressWarnings(as.integer(x))
+as_int  <- function(x) suppressWarnings(as.integer(x))
 
 get_col <- function(df, col, default = NA_character_) {
   if (col %in% names(df)) {
     v <- df[[col]]
-    if (is.list(v)) v <- sapply(v, function(x) paste(x, collapse = "; "))
+    if (is.list(v))   v <- sapply(v, function(x) paste(x, collapse = "; "))
     if (is.factor(v)) v <- as.character(v)
     v
   } else {
@@ -52,16 +52,16 @@ safe_year <- function(x) {
   y
 }
 
-# ---- LOAD DATA (from GitHub raw URL) ----
+# ---- LOAD DATA (GET via webR) ----
 load_source_data <- function(file_type, url) {
-  tf <- tempfile(fileext = if (file_type == "overton") ".csv" else ".txt")
-  webr::fetch(url, tf)  # GET via webR
+  tf  <- tempfile(fileext = if (file_type == "overton") ".csv" else ".txt")
+  webr::fetch(url, tf)  # Download into webR virtual FS
   txt <- readr::read_file(tf)
   
   if (file_type == "overton") {
     readr::read_csv(txt, show_col_types = FALSE)
   } else {
-    # Auto-detect delimiter (tab/semicolon/comma)
+    # Auto-detect delimiter (tab / semicolon / comma)
     delim <- if (grepl("\t", txt)) "\t" else if (grepl(";", txt)) ";" else ","
     readr::read_delim(txt, delim = delim, show_col_types = FALSE, quote = "")
   }
@@ -87,14 +87,11 @@ adapt_overton <- function(df) {
 }
 
 adapt_scientific <- function(df) {
-  BP <- get_col(df, "BP")
-  EP <- get_col(df, "EP")
+  BP <- get_col(df, "BP"); EP <- get_col(df, "EP")
   pages <- ifelse(!is.na(BP) & !is.na(EP), paste0(BP, "-", EP), NA_character_)
-  VL <- get_col(df, "VL")
-  IS <- get_col(df, "IS")
-  PY <- get_col(df, "PY")
-  DI <- get_col(df, "DI")
-  DL <- get_col(df, "DL")
+  VL <- get_col(df, "VL"); IS <- get_col(df, "IS")
+  PY <- get_col(df, "PY"); DI <- get_col(df, "DI"); DL <- get_col(df, "DL")
+  
   tibble(
     source    = "Web of Science",
     raw_id    = get_col(df, "UT"),
@@ -121,12 +118,11 @@ expected_cols <- c(
   paste0("method_group_", 1:7)
 )
 
-# ---- GOOGLE SHEET API HELPERS (WebR-friendly) ----
+# ---- GOOGLE SHEET HELPERS (GET via webR, POST via JS) ----
 sheet_get <- function() {
   tf <- tempfile(fileext = ".json")
   ok <- tryCatch({ webr::fetch(GS_ENDPOINT, tf); TRUE }, error = function(e) FALSE)
   if (!ok) {
-    # Return empty tibble with expected columns
     return(tibble::as_tibble(setNames(rep(list(character()), length(expected_cols)), expected_cols)))
   }
   txt <- readr::read_file(tf)
@@ -138,14 +134,14 @@ sheet_get <- function() {
     dplyr::mutate(dplyr::across(dplyr::everything(), as.character))
 }
 
-# POST helper: use JavaScript fetch (added in UI) to upsert a row
+# Trigger POST from R using JS fetch; handle result via input$gs_save_status
 sheet_upsert <- function(row_list) {
   shinyjs::runjs(sprintf(
     "gsUpsert(%s, %s);",
     jsonlite::toJSON(GS_ENDPOINT, auto_unbox = TRUE),
-    jsonlite::toJSON(row_list, auto_unbox = TRUE)
+    jsonlite::toJSON(row_list,   auto_unbox = TRUE)
   ))
-  invisible(TRUE)
+  invisible(TRUE)  # success/failure reported by input$gs_save_status
 }
 
 # =========================
@@ -153,7 +149,8 @@ sheet_upsert <- function(row_list) {
 # =========================
 ui <- fluidPage(
   useShinyjs(),
-  # JS helper to POST to GS_ENDPOINT and report status back to R
+  
+  # JS helper to POST JSON to GS_ENDPOINT and report status to R
   tags$script(HTML("
     async function gsUpsert(url, payload) {
       try {
@@ -198,7 +195,9 @@ ui <- fluidPage(
           hr(),
           radioButtons("included", "Meets inclusion criteria?", choices = c("Yes", "No"), selected = character(0)),
           hr(),
-          radioButtons("literature_type", "Literature type", choices = c("Grey literature", "Scientific Literature", "Eklipse/BioAgora"), selected = character(0)),
+          radioButtons("literature_type", "Literature type",
+                       choices = c("Grey literature", "Scientific Literature", "Eklipse/BioAgora"),
+                       selected = character(0)),
           conditionalPanel(
             condition = "input.included == 'No'",
             textAreaInput("exclusion_reason", "Reason for exclusion", rows = 3),
@@ -276,14 +275,15 @@ ui <- fluidPage(
 # SERVER
 # =========================
 server <- function(input, output, session) {
-  # Load source data from GitHub raw (WebR fetch)
+  # Load source data from GitHub (GET via webR)
   raw_data   <- load_source_data(file_type, DATA_URL)
   records_df <- if (file_type == "overton") adapt_overton(raw_data) else adapt_scientific(raw_data)
   
-  # Load existing results from Google Sheet (WebR fetch of JSON)
+  # Load existing results (GET via webR)
   results_df <- sheet_get()
   results_rv <- reactiveVal(results_df)
   
+  # Comparators
   safe_equal_str <- function(a, b) { a <- ifelse(is.na(a), "", str_trim(a)); b <- ifelse(is.na(b), "", str_trim(b)); a == b }
   safe_equal_int <- function(a, b) { ai <- as_int(a); bi <- as_int(b); (is.na(ai) & is.na(bi)) | (!is.na(ai) & !is.na(bi) & ai == bi) }
   
@@ -333,7 +333,10 @@ server <- function(input, output, session) {
   output$authors_text <- renderText({ paste("Authors:", current()$authors) })
   output$year_text    <- renderText({ paste("Year:",    current()$year) })
   
-  observe({ inc <- input$included; if (is.null(inc) || inc != "Yes") updateTabsetPanel(session, "main_tabs", selected = "tab1") })
+  observe({
+    inc <- input$included
+    if (is.null(inc) || inc != "Yes") updateTabsetPanel(session, "main_tabs", selected = "tab1")
+  })
   
   output$methods_bucket_ui <- renderUI({
     req(input$methods_used)
@@ -362,7 +365,7 @@ server <- function(input, output, session) {
     }
   })
   
-  # Handle upsert status (from JS) and refresh results
+  # Handle POST status (from JS) and refresh results
   observeEvent(input$gs_save_status, {
     status <- input$gs_save_status
     if (is.null(status)) return()
@@ -378,10 +381,12 @@ server <- function(input, output, session) {
   observeEvent(input$save_entry_tab1, {
     req(input$included)
     if (input$included != "No") {
-      showNotification("Use the Tab 3 Save Entry for included records.", type = "warning"); return(NULL)
+      showNotification("Use the Tab 3 Save Entry for included records.", type = "warning")
+      return(NULL)
     }
     if (is.null(input$exclusion_reason) || input$exclusion_reason == "") {
-      showNotification("Please provide a reason for exclusion.", type = "error"); return(NULL)
+      showNotification("Please provide a reason for exclusion.", type = "error")
+      return(NULL)
     }
     
     row <- list(
@@ -409,7 +414,8 @@ server <- function(input, output, session) {
   observeEvent(input$save_entry, {
     req(input$included)
     if (input$included != "Yes") {
-      showNotification("Mark inclusion as 'Yes' to save full methods entry, or save as exclusion in Tab 1.", type = "warning"); return(NULL)
+      showNotification("Mark inclusion as 'Yes' to save full methods entry, or save as exclusion in Tab 1.", type = "warning")
+      return(NULL)
     }
     
     methods_wide <- sapply(1:7, function(i) {
