@@ -1,5 +1,5 @@
 # =========================
-# WP2 REA Tool (Shinylive + Google Sheet persistence)
+# WP2 REA Tool 
 # =========================
 
 library(shiny)
